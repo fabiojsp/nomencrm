@@ -1,4 +1,4 @@
-/* v8: edición completa de visitas + agenda con calendario mensual */
+/* v8.1 completo: fix IndexedDB (add vs put) + calendario + agenda */
 (function(){
   const onReady = (fn) => (document.readyState === "loading") ? document.addEventListener("DOMContentLoaded", fn) : fn();
 
@@ -20,7 +20,7 @@
 
     async function dbInit(){
       return new Promise((resolve,reject)=>{
-        const req=indexedDB.open("crm_db",11);
+        const req=indexedDB.open("crm_db",12);
         req.onupgradeneeded = (e)=>{
           const db=e.target.result;
           if(!db.objectStoreNames.contains("clientes")) db.createObjectStore("clientes",{keyPath:"id",autoIncrement:true});
@@ -37,6 +37,13 @@
       return new Promise((res,rej)=>{
         const obj = {...c}; if (obj.id == null) delete obj.id;
         const r=tx("clientes","readwrite").add(obj);
+        r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
+      });
+    }
+    function addVisita(v){
+      return new Promise((res,rej)=>{
+        const obj = {...v}; if (obj.id == null) delete obj.id;
+        const r=tx("visitas","readwrite").add(obj);
         r.onsuccess=()=>res(r.result); r.onerror=()=>rej(r.error);
       });
     }
@@ -240,25 +247,24 @@
         chk.checked = active;
         lab.classList.toggle("active", active);
       });
-      // Panel agendar sólo si Planeada
-      $("#panelAgendar").classList.toggle("hidden", estado!=="Planeada");
-      if (estado==="Planeada" && !$("#vAgendaFechaHora").value){
-        $("#vAgendaFechaHora").value = $("#vFechaHora").value || isoLocalNow();
+      document.getElementById("panelAgendar").classList.toggle("hidden", estado!=="Planeada");
+      if (estado==="Planeada" && !document.getElementById("vAgendaFechaHora").value){
+        document.getElementById("vAgendaFechaHora").value = document.getElementById("vFechaHora").value || isoLocalNow();
       }
     }
     function getEstadoUI(){
-      if ($("#chkPlaneada").checked) return "Planeada";
-      if ($("#chkRealizada").checked) return "Realizada";
-      if ($("#chkCancelada").checked) return "Cancelada";
+      if (document.getElementById("chkPlaneada").checked) return "Planeada";
+      if (document.getElementById("chkRealizada").checked) return "Realizada";
+      if (document.getElementById("chkCancelada").checked) return "Cancelada";
       return "Planeada";
     }
-    $("#estadoGroup").addEventListener("change", (e)=>{
+    document.getElementById("estadoGroup").addEventListener("change", (e)=>{
       const estado = e.target.closest(".toggle")?.dataset?.estado;
       if (!estado) return;
       setEstadoUI(estado);
     });
     function renderCatalogoProductos(seleccion=[]) {
-      const cont = $("#vProductos");
+      const cont = document.getElementById("vProductos");
       cont.innerHTML = "";
       const selKey = new Set(seleccion.map(p => `${p.grupo}|${p.producto}|${p.presentacion}`));
       CATALOGO.forEach(g => {
@@ -269,7 +275,7 @@
           const row = document.createElement("div");
           row.className = "row";
           const checks = it.presentaciones.map(p => {
-            const id = `prod_${g.grupo}_${it.nombre}_${p}`.replace(/\s+/g,'_');
+            const id = `prod_${g.grupo}_${it.nombre}_${p}`.replace(/\\s+/g,'_');
             const checked = selKey.has(`${g.grupo}|${it.nombre}|${p}`) ? "checked" : "";
             return `
               <label class="row" style="gap:6px">
@@ -286,57 +292,59 @@
     function openVisitaNueva(clienteId){
       visitaForm.id = null;
       visitaForm.clienteId = clienteId;
-      $("#visitaTitulo").textContent = "Registrar visita";
-      $("#vFechaHora").value = isoLocalNow();
-      $("#vNotas").value = "";
+      document.getElementById("visitaTitulo").textContent = "Registrar visita";
+      document.getElementById("vFechaHora").value = isoLocalNow();
+      document.getElementById("vNotas").value = "";
       setEstadoUI("Planeada");
-      $("#vAgendaFechaHora").value = $("#vFechaHora").value;
+      document.getElementById("vAgendaFechaHora").value = document.getElementById("vFechaHora").value;
       renderCatalogoProductos([]);
       views.visita();
     }
     function openVisitaEditar(v){
       visitaForm.id = v.id;
       visitaForm.clienteId = v.clienteId;
-      $("#visitaTitulo").textContent = "Editar visita";
+      document.getElementById("visitaTitulo").textContent = "Editar visita";
       const d = new Date(v.fechaHora);
       d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
-      $("#vFechaHora").value = d.toISOString().slice(0,16);
-      $("#vNotas").value = v.notas||"";
+      document.getElementById("vFechaHora").value = d.toISOString().slice(0,16);
+      document.getElementById("vNotas").value = v.notas||"";
       setEstadoUI(v.estado||"Planeada");
-      $("#vAgendaFechaHora").value = $("#vFechaHora").value;
+      document.getElementById("vAgendaFechaHora").value = document.getElementById("vFechaHora").value;
       renderCatalogoProductos(v.productos||[]);
       views.visita();
     }
     function readVisitaForm(){
       const estado = getEstadoUI();
       const baseInput = (estado==="Planeada") ? "vAgendaFechaHora" : "vFechaHora";
-      const dtLocal = document.getElementById(baseInput).value || $("#vFechaHora").value;
+      const dtLocal = document.getElementById(baseInput).value || document.getElementById("vFechaHora").value;
       const fechaHora = dtLocal ? new Date(dtLocal).toISOString() : new Date().toISOString();
-      const notas  = $("#vNotas").value || "";
+      const notas  = document.getElementById("vNotas").value || "";
       const productos = Array.from(document.querySelectorAll("#vProductos input[type=checkbox][data-prod]:checked"))
         .map(ch => ({
           grupo: ch.getAttribute("data-grupo"),
           producto: ch.getAttribute("data-item"),
           presentacion: ch.getAttribute("data-pres")
         }));
-      return {
-        id: visitaForm.id ?? undefined,
+      const idVal = visitaForm.id;
+      const obj = {
         clienteId: visitaForm.clienteId,
         localId: null,
         usuarioEmail: state.email || "admin@local",
         fechaHora, estado, notas, productos
       };
+      if (idVal != null) obj.id = idVal;
+      return obj;
     }
-    $("#btnVisitaHoy").addEventListener("click", () => {
+    document.getElementById("btnVisitaHoy").addEventListener("click", () => {
       if (form.id == null) { alert("Primero guarda el cliente."); return; }
       openVisitaNueva(form.id);
     });
-    $("#btnCancelarVisita").addEventListener("click", ()=> views.app());
-    $("#btnGuardarVisita").addEventListener("click", async ()=>{
+    document.getElementById("btnCancelarVisita").addEventListener("click", ()=> views.app());
+    document.getElementById("btnGuardarVisita").addEventListener("click", async ()=>{
       if (!visitaForm.clienteId) { alert("Cliente no válido."); return; }
       const v = readVisitaForm();
       try{
-        await putItem("visitas", v);
+        if (v.id == null) await addVisita(v); else await putItem("visitas", v);
         views.app();
         renderVisitas();
         renderCalendar();
@@ -348,12 +356,12 @@
     });
 
     // ===== Lista de clientes =====
-    $("#btnNuevoCliente").addEventListener("click", ()=>{ clearClienteForm(); views.form(); });
-    $("#btnCancelarCliente").addEventListener("click", ()=> views.app());
-    $("#buscarCliente").addEventListener("input", renderClientes);
+    document.getElementById("btnNuevoCliente").addEventListener("click", ()=>{ clearClienteForm(); views.form(); });
+    document.getElementById("btnCancelarCliente").addEventListener("click", ()=> views.app());
+    document.getElementById("buscarCliente").addEventListener("input", renderClientes);
 
     async function renderClientes(){
-      const q = ($("#buscarCliente").value||"").toLowerCase();
+      const q = (document.getElementById("buscarCliente").value||"").toLowerCase();
       let list = await getAll("clientes");
       if (q) list = list.filter(c =>
         (c.nombreEmpresa||"").toLowerCase().includes(q) ||
@@ -366,7 +374,7 @@
         (c.email||"").toLowerCase().includes(q) ||
         (c.notas||"").toLowerCase().includes(q)
       );
-      const cont = $("#listaClientes"); cont.innerHTML="";
+      const cont = document.getElementById("listaClientes"); cont.innerHTML="";
       for (const c of list.sort((a,b)=>(b.actualizadoEn||"").localeCompare(a.actualizadoEn||""))) {
         const el = document.createElement("div");
         el.className="item";
@@ -385,7 +393,7 @@
             <div class="row">
               <button data-visitar class="primary">Visitar</button>
               <button data-editar>Editar</button>
-              <button data-eliminar class="danger">Eliminar</button>
+              <button class="danger" data-eliminar>Eliminar</button>
             </div>
           </div>`;
         el.querySelector("[data-visitar]").onclick = () => openVisitaNueva(c.id);
@@ -395,17 +403,14 @@
           await delItem("clientes", c.id);
           const visitas = await getAll("visitas");
           for (const v of visitas.filter(x=>x.clienteId===c.id)) await delItem("visitas", v.id);
-          renderClientes();
-          renderVisitas();
-          renderCalendar();
-          renderAgenda();
+          renderClientes(); renderVisitas(); renderCalendar(); renderAgenda();
         };
         cont.appendChild(el);
       }
     }
 
-    // ===== Visitas (listar + editar desde tarjeta) =====
-    $("#btnNuevaVisita").addEventListener("click", async () => {
+    // ===== Visitas (listar + editar) =====
+    document.getElementById("btnNuevaVisita").addEventListener("click", async () => {
       const clientes = await getAll("clientes");
       if (!clientes.length) return alert("Primero crea un cliente.");
       const nombre = prompt("Cliente (escribe el nombre exacto):", clientes[0].nombreComercial || "");
@@ -415,7 +420,7 @@
     });
 
     async function renderVisitas() {
-      const cont = $("#listaVisitas"); cont.innerHTML = "";
+      const cont = document.getElementById("listaVisitas"); cont.innerHTML = "";
       const visitas = await getAll("visitas");
       const clientes = await getAll("clientes");
       for (const v of visitas.sort((a,b)=>(a.fechaHora||"").localeCompare(b.fechaHora||""))) {
@@ -442,19 +447,17 @@
         el.querySelector("[data-eliminar]").onclick = async () => {
           if (!confirm("¿Eliminar visita?")) return;
           await delItem("visitas", v.id);
-          renderVisitas();
-          renderCalendar();
-          renderAgenda();
+          renderVisitas(); renderCalendar(); renderAgenda();
         };
         cont.appendChild(el);
       }
     }
 
-    // ===== Agenda (lista + calendario) =====
-    $("#btnFiltrarAgenda").addEventListener("click", renderAgenda);
+    // ===== Agenda =====
+    document.getElementById("btnFiltrarAgenda").addEventListener("click", renderAgenda);
     function renderAgenda() {
-      const d1v = $("#fDesde").value;
-      const d2v = $("#fHasta").value;
+      const d1v = document.getElementById("fDesde").value;
+      const d2v = document.getElementById("fHasta").value;
       const d1 = d1v ? new Date(d1v) : new Date(Date.now()-7*864e5);
       const d2 = d2v ? new Date(d2v) : new Date(Date.now()+60*864e5);
       getAll("visitas").then(list => {
@@ -462,7 +465,7 @@
           const d = new Date(v.fechaHora);
           return d >= d1 && d <= d2;
         }).sort((a,b)=> (a.fechaHora||"").localeCompare(b.fechaHora||""));
-        const cont = $("#listaAgenda");
+        const cont = document.getElementById("listaAgenda");
         cont.innerHTML = "";
         list.forEach(v => {
           const div = document.createElement("div");
@@ -476,15 +479,15 @@
     // Calendario mensual
     let calMonth = (new Date()).getMonth();
     let calYear  = (new Date()).getFullYear();
-    $("#calPrev").addEventListener("click", ()=>{ calMonth--; if (calMonth<0){calMonth=11;calYear--;} renderCalendar(); });
-    $("#calNext").addEventListener("click", ()=>{ calMonth++; if (calMonth>11){calMonth=0;calYear++;} renderCalendar(); });
+    document.getElementById("calPrev").addEventListener("click", ()=>{ calMonth--; if (calMonth<0){calMonth=11;calYear--;} renderCalendar(); });
+    document.getElementById("calNext").addEventListener("click", ()=>{ calMonth++; if (calMonth>11){calMonth=0;calYear++;} renderCalendar(); });
 
     async function renderCalendar(){
       const title = new Date(calYear, calMonth, 1).toLocaleString("es", {month:"long", year:"numeric"});
-      $("#calTitle").textContent = title.charAt(0).toUpperCase() + title.slice(1);
-      const grid = $("#calGrid"); grid.innerHTML="";
+      document.getElementById("calTitle").textContent = title.charAt(0).toUpperCase() + title.slice(1);
+      const grid = document.getElementById("calGrid"); grid.innerHTML="";
       const first = new Date(calYear, calMonth, 1);
-      const startDay = (first.getDay()+6)%7; // lunes=0
+      const startDay = (first.getDay()+6)%7;
       const days = new Date(calYear, calMonth+1, 0).getDate();
       const today = new Date(); const todayKey = today.toISOString().slice(0,10);
 
@@ -498,7 +501,6 @@
         else counts[key].P++;
       });
 
-      // blanks
       for (let i=0;i<startDay;i++){
         const cell = document.createElement("div"); cell.className="cal-cell"; grid.appendChild(cell);
       }
@@ -516,16 +518,16 @@
           if (c.C) { const dot=document.createElement("div"); dot.className="cal-dot cancel"; dot.style.right="30px"; cell.appendChild(dot); }
         }
         cell.addEventListener("click", ()=>{
-          $("#fDesde").value = key;
-          $("#fHasta").value = key;
+          document.getElementById("fDesde").value = key;
+          document.getElementById("fHasta").value = key;
           renderAgenda();
         });
         grid.appendChild(cell);
       }
     }
 
-    // Export simple (JSON)
-    $("#btnExport").addEventListener("click", async () => {
+    // Export JSON
+    document.getElementById("btnExport").addEventListener("click", async () => {
       const clientes = await getAll("clientes");
       const locales = await getAll("locales");
       const visitas = await getAll("visitas");
@@ -538,7 +540,7 @@
 
     // Inicialización
     dbInit().then(()=>{ renderAll(); renderCalendar(); });
-    if ("serviceWorker" in navigator) window.addEventListener("load", ()=> navigator.serviceWorker.register("sw.js?v=8"));
+    if ("serviceWorker" in navigator) window.addEventListener("load", ()=> navigator.serviceWorker.register("sw.js?v=9"));
 
     function renderAll(){ renderClientes(); renderVisitas(); renderAgenda(); }
     window.renderAll = renderAll;
