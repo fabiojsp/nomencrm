@@ -1,1 +1,1 @@
-console.log('v8.2 placeholder');
+console.log('bootstrap'); document.addEventListener('DOMContentLoaded',()=>{document.getElementById('app').innerHTML='<h1>CRM listo</h1>';});
